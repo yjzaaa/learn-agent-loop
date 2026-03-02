@@ -1,59 +1,53 @@
 #!/usr/bin/env python3
 """
-s08_background_tasks.py - Background Tasks
+s08_background_tasks.py - 后台任务 (Background Tasks)
 
-Run commands in background threads. A notification queue is drained
-before each LLM call to deliver results.
+在后台线程中运行命令。通知队列在每个 LLM 调用之前被清空以传递结果。
 
-    Main thread                Background thread
+    主线程                   后台线程
     +-----------------+        +-----------------+
-    | agent loop      |        | task executes   |
+    | agent 循环      |        | 任务执行        |
     | ...             |        | ...             |
-    | [LLM call] <---+------- | enqueue(result) |
-    |  ^drain queue   |        +-----------------+
+    | [LLM 调用] <---+------- | 入队(结果)      |
+    |  ^清空队列      |        +-----------------+
     +-----------------+
 
-    Timeline:
-    Agent ----[spawn A]----[spawn B]----[other work]----
+    时间线:
+    Agent ----[启动 A]----[启动 B]----[其他工作]----
                  |              |
                  v              v
-              [A runs]      [B runs]        (parallel)
+              [A 运行]      [B 运行]        (并行)
                  |              |
-                 +-- notification queue --> [results injected]
+                 +-- 通知队列 --> [结果注入]
 
-Key insight: "Fire and forget -- the agent doesn't block while the command runs."
+核心洞察: "即发即弃 —— agent 在命令运行时不会阻塞。"
 """
 
+import json
 import os
 import subprocess
 import threading
 import uuid
 from pathlib import Path
 
-from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
-if os.getenv("ANTHROPIC_BASE_URL"):
-    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+from client import get_client, get_model
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
+client = get_client()
+MODEL = get_model()
 
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use background_run for long-running commands."
 
 
-# -- BackgroundManager: threaded execution + notification queue --
+# -- BackgroundManager: 线程执行 + 通知队列 --
 class BackgroundManager:
     def __init__(self):
         self.tasks = {}  # task_id -> {status, result, command}
-        self._notification_queue = []  # completed task results
+        self._notification_queue = []  # 已完成任务的结果
         self._lock = threading.Lock()
 
     def run(self, command: str) -> str:
-        """Start a background thread, return task_id immediately."""
+        """启动后台线程，立即返回 task_id。"""
         task_id = str(uuid.uuid4())[:8]
         self.tasks[task_id] = {"status": "running", "result": None, "command": command}
         thread = threading.Thread(
@@ -63,7 +57,7 @@ class BackgroundManager:
         return f"Background task {task_id} started: {command[:80]}"
 
     def _execute(self, task_id: str, command: str):
-        """Thread target: run subprocess, capture output, push to queue."""
+        """线程目标: 运行子进程，捕获输出，推送到队列。"""
         try:
             r = subprocess.run(
                 command, shell=True, cwd=WORKDIR,
@@ -88,7 +82,7 @@ class BackgroundManager:
             })
 
     def check(self, task_id: str = None) -> str:
-        """Check status of one task or list all."""
+        """检查单个任务状态或列出所有任务。"""
         if task_id:
             t = self.tasks.get(task_id)
             if not t:
@@ -100,7 +94,7 @@ class BackgroundManager:
         return "\n".join(lines) if lines else "No background tasks."
 
     def drain_notifications(self) -> list:
-        """Return and clear all pending completion notifications."""
+        """返回并清空所有待处理的通知。"""
         with self._lock:
             notifs = list(self._notification_queue)
             self._notification_queue.clear()
@@ -110,7 +104,7 @@ class BackgroundManager:
 BG = BackgroundManager()
 
 
-# -- Tool implementations --
+# -- 工具实现 --
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
     if not path.is_relative_to(WORKDIR):
@@ -169,24 +163,24 @@ TOOL_HANDLERS = {
 }
 
 TOOLS = [
-    {"name": "bash", "description": "Run a shell command (blocking).",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "read_file", "description": "Read file contents.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write content to file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
-    {"name": "background_run", "description": "Run command in background thread. Returns task_id immediately.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "check_background", "description": "Check background task status. Omit task_id to list all.",
-     "input_schema": {"type": "object", "properties": {"task_id": {"type": "string"}}}},
+    {"type": "function", "function": {"name": "bash", "description": "Run a shell command (blocking).",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read file contents.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "write_file", "description": "Write content to file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "Replace exact text in file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}}},
+    {"type": "function", "function": {"name": "background_run", "description": "Run command in background thread. Returns task_id immediately.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "check_background", "description": "Check background task status. Omit task_id to list all.",
+     "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}}}}},
 ]
 
 
 def agent_loop(messages: list):
     while True:
-        # Drain background notifications and inject as system message before LLM call
+        # 清空后台通知并在 LLM 调用前作为系统消息注入
         notifs = BG.drain_notifications()
         if notifs and messages:
             notif_text = "\n".join(
@@ -194,23 +188,27 @@ def agent_loop(messages: list):
             )
             messages.append({"role": "user", "content": f"<background-results>\n{notif_text}\n</background-results>"})
             messages.append({"role": "assistant", "content": "Noted background results."})
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "system", "content": SYSTEM}] + messages,
+            tools=TOOLS,
+            max_tokens=8000,
         )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
+        assistant_message = response.choices[0].message
+        messages.append({"role": "assistant", "content": assistant_message.content or "", "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None})
+        if response.choices[0].finish_reason != "tool_calls":
             return
         results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
+        if assistant_message.tool_calls:
+            for tool_call in assistant_message.tool_calls:
+                handler = TOOL_HANDLERS.get(tool_call.function.name)
                 try:
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                    args = json.loads(tool_call.function.arguments)
+                    output = handler(**args) if handler else f"Unknown tool: {tool_call.function.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+                print(f"> {tool_call.function.name}: {str(output)[:200]}")
+                results.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
 
 
@@ -226,8 +224,6 @@ if __name__ == "__main__":
         history.append({"role": "user", "content": query})
         agent_loop(history)
         response_content = history[-1]["content"]
-        if isinstance(response_content, list):
-            for block in response_content:
-                if hasattr(block, "text"):
-                    print(block.text)
+        if isinstance(response_content, str):
+            print(response_content)
         print()

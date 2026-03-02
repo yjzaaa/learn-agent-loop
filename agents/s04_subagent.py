@@ -1,48 +1,43 @@
 #!/usr/bin/env python3
 """
-s04_subagent.py - Subagents
+s04_subagent.py - 子代理（Subagents）
 
-Spawn a child agent with fresh messages=[]. The child works in its own
-context, sharing the filesystem, then returns only a summary to the parent.
+生成一个消息列表为空的子代理。子代理在自己的上下文中工作，
+共享文件系统，然后只向父代理返回摘要。
 
-    Parent agent                     Subagent
+    父代理                         子代理
     +------------------+             +------------------+
-    | messages=[...]   |             | messages=[]      |  <-- fresh
-    |                  |  dispatch   |                  |
+    | messages=[...]   |             | messages=[]      |  <-- 全新的
+    |                  |  分发       |                  |
     | tool: task       | ---------->| while tool_use:  |
-    |   prompt="..."   |            |   call tools     |
-    |   description="" |            |   append results |
-    |                  |  summary   |                  |
-    |   result = "..." | <--------- | return last text |
+    |   prompt="..."   |            |   调用工具       |
+    |   description="" |            |   追加结果       |
+    |                  |  摘要       |                  |
+    |   result = "..." | <--------- | 返回最后文本     |
     +------------------+             +------------------+
               |
-    Parent context stays clean.
-    Subagent context is discarded.
+    父代理上下文保持干净。
+    子代理上下文被丢弃。
 
-Key insight: "Process isolation gives context isolation for free."
+核心洞察："进程隔离天然带来上下文隔离。"
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
 
-from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
-if os.getenv("ANTHROPIC_BASE_URL"):
-    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+from client import get_client, get_model
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
+client = get_client()
+MODEL = get_model()
 
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use the task tool to delegate exploration or subtasks."
 SUBAGENT_SYSTEM = f"You are a coding subagent at {WORKDIR}. Complete the given task, then summarize your findings."
 
 
-# -- Tool implementations shared by parent and child --
+# -- 父代理和子代理共享的工具实现 --
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
     if not path.is_relative_to(WORKDIR):
@@ -98,69 +93,79 @@ TOOL_HANDLERS = {
     "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
 }
 
-# Child gets all base tools except task (no recursive spawning)
+# 子代理获取所有基础工具，除了 task（不允许递归生成）
 CHILD_TOOLS = [
-    {"name": "bash", "description": "Run a shell command.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "read_file", "description": "Read file contents.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write content to file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
+    {"type": "function", "function": {"name": "bash", "description": "Run a shell command.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read file contents.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "write_file", "description": "Write content to file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "Replace exact text in file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}}},
 ]
 
 
-# -- Subagent: fresh context, filtered tools, summary-only return --
+# -- 子代理：全新的上下文，过滤的工具，仅返回摘要 --
 def run_subagent(prompt: str) -> str:
-    sub_messages = [{"role": "user", "content": prompt}]  # fresh context
-    for _ in range(30):  # safety limit
-        response = client.messages.create(
-            model=MODEL, system=SUBAGENT_SYSTEM, messages=sub_messages,
+    sub_messages = [{"role": "user", "content": prompt}]  # 全新的上下文
+    for _ in range(30):  # 安全限制
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "system", "content": SUBAGENT_SYSTEM}] + sub_messages,
             tools=CHILD_TOOLS, max_tokens=8000,
         )
-        sub_messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
+        assistant_message = response.choices[0].message
+        messages.append({
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None
+        })
+        if response.choices[0].finish_reason != "tool_calls":
             break
         results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
-                output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)[:50000]})
+        for tool_call in assistant_message.tool_calls:
+            handler = TOOL_HANDLERS.get(tool_call.function.name)
+            tool_input = json.loads(tool_call.function.arguments)
+            output = handler(**tool_input) if handler else f"Unknown tool: {tool_call.function.name}"
+            results.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(output)[:50000]})
         sub_messages.append({"role": "user", "content": results})
-    # Only the final text returns to the parent -- child context is discarded
-    return "".join(b.text for b in response.content if hasattr(b, "text")) or "(no summary)"
+    # 只有最终文本返回给父代理 -- 子代理上下文被丢弃
+    return assistant_message.content or "(no summary)"
 
 
-# -- Parent tools: base tools + task dispatcher --
+# -- 父代理工具：基础工具 + 任务分发器 --
 PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task", "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
-     "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}, "description": {"type": "string", "description": "Short description of the task"}}, "required": ["prompt"]}},
+    {"type": "function", "function": {"name": "task", "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+     "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}, "description": {"type": "string", "description": "Short description of the task"}}, "required": ["prompt"]}}},
 ]
 
 
 def agent_loop(messages: list):
     while True:
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "system", "content": SYSTEM}] + messages,
             tools=PARENT_TOOLS, max_tokens=8000,
         )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
+        assistant_message = response.choices[0].message
+        messages.append({
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None
+        })
+        if response.choices[0].finish_reason != "tool_calls":
             return
         results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                if block.name == "task":
-                    desc = block.input.get("description", "subtask")
-                    print(f"> task ({desc}): {block.input['prompt'][:80]}")
-                    output = run_subagent(block.input["prompt"])
-                else:
-                    handler = TOOL_HANDLERS.get(block.name)
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                print(f"  {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+        for tool_call in assistant_message.tool_calls:
+            tool_input = json.loads(tool_call.function.arguments)
+            if tool_call.function.name == "task":
+                desc = tool_input.get("description", "subtask")
+                print(f"> task ({desc}): {tool_input['prompt'][:80]}")
+                output = run_subagent(tool_input["prompt"])
+            else:
+                handler = TOOL_HANDLERS.get(tool_call.function.name)
+                output = handler(**tool_input) if handler else f"Unknown tool: {tool_call.function.name}"
+            print(f"  {str(output)[:200]}")
+            results.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
 
 
@@ -176,8 +181,6 @@ if __name__ == "__main__":
         history.append({"role": "user", "content": query})
         agent_loop(history)
         response_content = history[-1]["content"]
-        if isinstance(response_content, list):
-            for block in response_content:
-                if hasattr(block, "text"):
-                    print(block.text)
+        if isinstance(response_content, str):
+            print(response_content)
         print()

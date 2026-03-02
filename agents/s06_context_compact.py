@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """
-s06_context_compact.py - Compact
+s06_context_compact.py - 上下文压缩（Compact）
 
-Three-layer compression pipeline so the agent can work forever:
+三层压缩管道，使代理可以永久工作：
 
-    Every turn:
+    每次交互：
     +------------------+
-    | Tool call result |
+    | 工具调用结果     |
     +------------------+
             |
             v
-    [Layer 1: micro_compact]        (silent, every turn)
-      Replace tool_result content older than last 3
-      with "[Previous: used {tool_name}]"
+    [第1层: micro_compact]        (静默，每次交互)
+      将超过最近3个的工具结果内容
+      替换为 "[Previous: used {tool_name}]"
             |
             v
-    [Check: tokens > 50000?]
+    [检查: tokens > 50000?]
        |               |
        no              yes
        |               |
        v               v
-    continue    [Layer 2: auto_compact]
-                  Save full transcript to .transcripts/
-                  Ask LLM to summarize conversation.
-                  Replace all messages with [summary].
+    继续执行    [第2层: auto_compact]
+                  保存完整记录到 .transcripts/
+                  请求 LLM 总结对话。
+                  将所有消息替换为 [summary]。
                         |
                         v
-                [Layer 3: compact tool]
-                  Model calls compact -> immediate summarization.
-                  Same as auto, triggered manually.
+                [第3层: compact 工具]
+                  模型调用 compact -> 立即总结。
+                  与自动总结相同，但手动触发。
 
-Key insight: "The agent can forget strategically and keep working forever."
+核心洞察："代理可以有策略地遗忘并永久工作。"
 """
 
 import json
@@ -39,17 +39,11 @@ import subprocess
 import time
 from pathlib import Path
 
-from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
-if os.getenv("ANTHROPIC_BASE_URL"):
-    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+from client import get_client, get_model
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
+client = get_client()
+MODEL = get_model()
 
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use tools to solve tasks."
 
@@ -59,68 +53,66 @@ KEEP_RECENT = 3
 
 
 def estimate_tokens(messages: list) -> int:
-    """Rough token count: ~4 chars per token."""
+    """粗略的 token 计数：约每4个字符1个 token。"""
     return len(str(messages)) // 4
 
 
-# -- Layer 1: micro_compact - replace old tool results with placeholders --
+# -- 第1层: micro_compact - 将旧的工具结果替换为占位符 --
 def micro_compact(messages: list) -> list:
-    # Collect (msg_index, part_index, tool_result_dict) for all tool_result entries
+    # 收集所有 tool 条目的 (msg_index, part_index, tool_dict)
     tool_results = []
     for msg_idx, msg in enumerate(messages):
         if msg["role"] == "user" and isinstance(msg.get("content"), list):
             for part_idx, part in enumerate(msg["content"]):
-                if isinstance(part, dict) and part.get("type") == "tool_result":
+                if isinstance(part, dict) and part.get("role") == "tool":
                     tool_results.append((msg_idx, part_idx, part))
     if len(tool_results) <= KEEP_RECENT:
         return messages
-    # Find tool_name for each result by matching tool_use_id in prior assistant messages
+    # 通过匹配之前助手消息中的 tool_call_id 来查找每个结果的工具名称
     tool_name_map = {}
     for msg in messages:
-        if msg["role"] == "assistant":
-            content = msg.get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if hasattr(block, "type") and block.type == "tool_use":
-                        tool_name_map[block.id] = block.name
-    # Clear old results (keep last KEEP_RECENT)
+        if msg["role"] == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                if isinstance(tc, dict) and tc.get("id"):
+                    tool_name_map[tc["id"]] = tc.get("function", {}).get("name", "unknown")
+    # 清除旧结果（保留最近的 KEEP_RECENT 个）
     to_clear = tool_results[:-KEEP_RECENT]
     for _, _, result in to_clear:
         if isinstance(result.get("content"), str) and len(result["content"]) > 100:
-            tool_id = result.get("tool_use_id", "")
+            tool_id = result.get("tool_call_id", "")
             tool_name = tool_name_map.get(tool_id, "unknown")
             result["content"] = f"[Previous: used {tool_name}]"
     return messages
 
 
-# -- Layer 2: auto_compact - save transcript, summarize, replace messages --
+# -- 第2层: auto_compact - 保存记录、总结、替换消息 --
 def auto_compact(messages: list) -> list:
-    # Save full transcript to disk
+    # 保存完整记录到磁盘
     TRANSCRIPT_DIR.mkdir(exist_ok=True)
     transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
     with open(transcript_path, "w") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
     print(f"[transcript saved: {transcript_path}]")
-    # Ask LLM to summarize
+    # 请求 LLM 进行总结
     conversation_text = json.dumps(messages, default=str)[:80000]
-    response = client.messages.create(
+    response = client.chat.completions.create(
         model=MODEL,
-        messages=[{"role": "user", "content":
+        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content":
             "Summarize this conversation for continuity. Include: "
             "1) What was accomplished, 2) Current state, 3) Key decisions made. "
             "Be concise but preserve critical details.\n\n" + conversation_text}],
         max_tokens=2000,
     )
-    summary = response.content[0].text
-    # Replace all messages with compressed summary
+    summary = response.choices[0].message.content
+    # 将所有消息替换为压缩后的总结
     return [
         {"role": "user", "content": f"[Conversation compressed. Transcript: {transcript_path}]\n\n{summary}"},
         {"role": "assistant", "content": "Understood. I have the context from the summary. Continuing."},
     ]
 
 
-# -- Tool implementations --
+# -- 工具实现 --
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
     if not path.is_relative_to(WORKDIR):
@@ -178,51 +170,56 @@ TOOL_HANDLERS = {
 }
 
 TOOLS = [
-    {"name": "bash", "description": "Run a shell command.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "read_file", "description": "Read file contents.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write content to file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
-    {"name": "compact", "description": "Trigger manual conversation compression.",
-     "input_schema": {"type": "object", "properties": {"focus": {"type": "string", "description": "What to preserve in the summary"}}}},
+    {"type": "function", "function": {"name": "bash", "description": "Run a shell command.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read file contents.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "write_file", "description": "Write content to file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "Replace exact text in file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}}},
+    {"type": "function", "function": {"name": "compact", "description": "Trigger manual conversation compression.",
+     "parameters": {"type": "object", "properties": {"focus": {"type": "string", "description": "What to preserve in the summary"}}}}},
 ]
 
 
 def agent_loop(messages: list):
     while True:
-        # Layer 1: micro_compact before each LLM call
+        # 第1层: 每次 LLM 调用前执行 micro_compact
         micro_compact(messages)
-        # Layer 2: auto_compact if token estimate exceeds threshold
+        # 第2层: 如果 token 估计超过阈值则触发 auto_compact
         if estimate_tokens(messages) > THRESHOLD:
             print("[auto_compact triggered]")
             messages[:] = auto_compact(messages)
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "system", "content": SYSTEM}] + messages,
             tools=TOOLS, max_tokens=8000,
         )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
+        assistant_message = response.choices[0].message
+        messages.append({
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None
+        })
+        if response.choices[0].finish_reason != "tool_calls":
             return
         results = []
         manual_compact = False
-        for block in response.content:
-            if block.type == "tool_use":
-                if block.name == "compact":
-                    manual_compact = True
-                    output = "Compressing..."
-                else:
-                    handler = TOOL_HANDLERS.get(block.name)
-                    try:
-                        output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                    except Exception as e:
-                        output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+        for tool_call in assistant_message.tool_calls:
+            tool_input = json.loads(tool_call.function.arguments)
+            if tool_call.function.name == "compact":
+                manual_compact = True
+                output = "Compressing..."
+            else:
+                handler = TOOL_HANDLERS.get(tool_call.function.name)
+                try:
+                    output = handler(**tool_input) if handler else f"Unknown tool: {tool_call.function.name}"
+                except Exception as e:
+                    output = f"Error: {e}"
+            print(f"> {tool_call.function.name}: {str(output)[:200]}")
+            results.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
-        # Layer 3: manual compact triggered by the compact tool
+        # 第3层: 由 compact 工具触发的手动压缩
         if manual_compact:
             print("[manual compact]")
             messages[:] = auto_compact(messages)
@@ -240,8 +237,6 @@ if __name__ == "__main__":
         history.append({"role": "user", "content": query})
         agent_loop(history)
         response_content = history[-1]["content"]
-        if isinstance(response_content, list):
-            for block in response_content:
-                if hasattr(block, "text"):
-                    print(block.text)
+        if isinstance(response_content, str):
+            print(response_content)
         print()

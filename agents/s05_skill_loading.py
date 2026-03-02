@@ -1,59 +1,54 @@
 #!/usr/bin/env python3
 """
-s05_skill_loading.py - Skills
+s05_skill_loading.py - 技能（Skills）
 
-Two-layer skill injection that avoids bloating the system prompt:
+两层技能注入机制，避免膨胀系统提示词：
 
-    Layer 1 (cheap): skill names in system prompt (~100 tokens/skill)
-    Layer 2 (on demand): full skill body in tool_result
+    第1层（廉价）：系统提示词中的技能名称（每个约100 tokens）
+    第2层（按需）：工具结果中的完整技能内容
 
     skills/
       pdf/
-        SKILL.md          <-- frontmatter (name, description) + body
+        SKILL.md          <-- 前言（name, description）+ 正文
       code-review/
         SKILL.md
 
-    System prompt:
+    系统提示词：
     +--------------------------------------+
     | You are a coding agent.              |
     | Skills available:                    |
-    |   - pdf: Process PDF files...        |  <-- Layer 1: metadata only
+    |   - pdf: Process PDF files...        |  <-- 第1层：仅元数据
     |   - code-review: Review code...      |
     +--------------------------------------+
 
-    When model calls load_skill("pdf"):
+    当模型调用 load_skill("pdf") 时：
     +--------------------------------------+
     | tool_result:                         |
     | <skill>                              |
-    |   Full PDF processing instructions   |  <-- Layer 2: full body
-    |   Step 1: ...                        |
-    |   Step 2: ...                        |
+    |   完整的 PDF 处理说明                |  <-- 第2层：完整正文
+    |   步骤1: ...                         |
+    |   步骤2: ...                         |
     | </skill>                             |
     +--------------------------------------+
 
-Key insight: "Don't put everything in the system prompt. Load on demand."
+核心洞察："不要把所有内容都放入系统提示词。按需加载。"
 """
 
+import json
 import os
 import re
 import subprocess
 from pathlib import Path
 
-from anthropic import Anthropic
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
-if os.getenv("ANTHROPIC_BASE_URL"):
-    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+from client import get_client, get_model
 
 WORKDIR = Path.cwd()
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
+client = get_client()
+MODEL = get_model()
 SKILLS_DIR = WORKDIR / "skills"
 
 
-# -- SkillLoader: scan skills/<name>/SKILL.md with YAML frontmatter --
+# -- SkillLoader：扫描 skills/<name>/SKILL.md 中的 YAML 前言 --
 class SkillLoader:
     def __init__(self, skills_dir: Path):
         self.skills_dir = skills_dir
@@ -70,7 +65,7 @@ class SkillLoader:
             self.skills[name] = {"meta": meta, "body": body, "path": str(f)}
 
     def _parse_frontmatter(self, text: str) -> tuple:
-        """Parse YAML frontmatter between --- delimiters."""
+        """解析 --- 分隔符之间的 YAML 前言。"""
         match = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.DOTALL)
         if not match:
             return {}, text
@@ -82,7 +77,7 @@ class SkillLoader:
         return meta, match.group(2).strip()
 
     def get_descriptions(self) -> str:
-        """Layer 1: short descriptions for the system prompt."""
+        """第1层：系统提示词中的简短描述。"""
         if not self.skills:
             return "(no skills available)"
         lines = []
@@ -96,7 +91,7 @@ class SkillLoader:
         return "\n".join(lines)
 
     def get_content(self, name: str) -> str:
-        """Layer 2: full skill body returned in tool_result."""
+        """第2层：工具结果中返回的完整技能内容。"""
         skill = self.skills.get(name)
         if not skill:
             return f"Error: Unknown skill '{name}'. Available: {', '.join(self.skills.keys())}"
@@ -105,15 +100,15 @@ class SkillLoader:
 
 SKILL_LOADER = SkillLoader(SKILLS_DIR)
 
-# Layer 1: skill metadata injected into system prompt
+# 第1层：注入到系统提示词中的技能元数据
 SYSTEM = f"""You are a coding agent at {WORKDIR}.
 Use load_skill to access specialized knowledge before tackling unfamiliar topics.
 
 Skills available:
-{SKILL_LOADER.get_descriptions()}"""
+{SKILL_LOADER.get_descriptions()}""" 
 
 
-# -- Tool implementations --
+# -- 工具实现 --
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
     if not path.is_relative_to(WORKDIR):
@@ -167,42 +162,47 @@ TOOL_HANDLERS = {
     "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
-    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),
+    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),# 第2层：工具结果中返回的完整技能内容
 }
 
 TOOLS = [
-    {"name": "bash", "description": "Run a shell command.",
-     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "read_file", "description": "Read file contents.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write content to file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in file.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
-    {"name": "load_skill", "description": "Load specialized knowledge by name.",
-     "input_schema": {"type": "object", "properties": {"name": {"type": "string", "description": "Skill name to load"}}, "required": ["name"]}},
+    {"type": "function", "function": {"name": "bash", "description": "Run a shell command.",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read file contents.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "write_file", "description": "Write content to file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "Replace exact text in file.",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}}},
+    {"type": "function", "function": {"name": "load_skill", "description": "Load specialized knowledge by name.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Skill name to load"}}, "required": ["name"]}}},
 ]
 
 
 def agent_loop(messages: list):
     while True:
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
+        response = client.chat.completions.create(
+            model=MODEL, messages=[{"role": "system", "content": SYSTEM}] + messages,
             tools=TOOLS, max_tokens=8000,
         )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
+        assistant_message = response.choices[0].message
+        messages.append({
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None
+        })
+        if response.choices[0].finish_reason != "tool_calls":
             return
         results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
-                try:
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                except Exception as e:
-                    output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+        for tool_call in assistant_message.tool_calls:
+            handler = TOOL_HANDLERS.get(tool_call.function.name)
+            tool_input = json.loads(tool_call.function.arguments)
+            try:
+                output = handler(**tool_input) if handler else f"Unknown tool: {tool_call.function.name}"
+            except Exception as e:
+                output = f"Error: {e}"
+            print(f"> {tool_call.function.name}: {str(output)[:200]}")
+            results.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
 
 
@@ -218,8 +218,6 @@ if __name__ == "__main__":
         history.append({"role": "user", "content": query})
         agent_loop(history)
         response_content = history[-1]["content"]
-        if isinstance(response_content, list):
-            for block in response_content:
-                if hasattr(block, "text"):
-                    print(block.text)
+        if isinstance(response_content, str):
+            print(response_content)
         print()

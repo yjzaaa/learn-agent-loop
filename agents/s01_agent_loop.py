@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-s01_agent_loop.py - The Agent Loop
+s01_agent_loop.py - 代理循环 (Agent Loop)
 
-The entire secret of an AI coding agent in one pattern:
+AI 编程代理的全部秘诀都包含在这个模式中：
 
-    while stop_reason == "tool_use":
+    while stop_reason == "tool_calls":
         response = LLM(messages, tools)
         execute tools
         append results
@@ -18,34 +18,34 @@ The entire secret of an AI coding agent in one pattern:
                           +---------------+
                           (loop continues)
 
-This is the core loop: feed tool results back to the model
-until the model decides to stop. Production agents layer
-policy, hooks, and lifecycle controls on top.
+这是核心循环：将工具执行结果反馈给模型，
+直到模型决定停止。生产级代理在此基础上
+增加了策略、钩子和生命周期控制。
 """
 
 import os
 import subprocess
+import json
 
-from anthropic import Anthropic
-from dotenv import load_dotenv
+from client import get_client, get_model
 
-load_dotenv(override=True)
+client = get_client()
+MODEL = get_model()
+WORKDIR = os.getcwd()
 
-if os.getenv("ANTHROPIC_BASE_URL"):
-    os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+SYSTEM = f"You are a coding agent at {WORKDIR}. Use bash to solve tasks. Act, don't explain."
 
-client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
-MODEL = os.environ["MODEL_ID"]
-
-SYSTEM = f"You are a coding agent at {os.getcwd()}. Use bash to solve tasks. Act, don't explain."
-
-TOOLS = [{
-    "name": "bash",
-    "description": "Run a shell command.",
-    "input_schema": {
-        "type": "object",
-        "properties": {"command": {"type": "string"}},
-        "required": ["command"],
+# OpenAI/DeepSeek 工具格式
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "bash",
+        "description": "Run a shell command.",
+        "parameters": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
     },
 }]
 
@@ -55,7 +55,7 @@ def run_bash(command: str) -> str:
     if any(d in command for d in dangerous):
         return "Error: Dangerous command blocked"
     try:
-        r = subprocess.run(command, shell=True, cwd=os.getcwd(),
+        r = subprocess.run(command, shell=True, cwd=WORKDIR,
                            capture_output=True, text=True, timeout=120)
         out = (r.stdout + r.stderr).strip()
         return out[:50000] if out else "(no output)"
@@ -63,28 +63,45 @@ def run_bash(command: str) -> str:
         return "Error: Timeout (120s)"
 
 
-# -- The core pattern: a while loop that calls tools until the model stops --
+# -- 核心模式：一个 while 循环，持续调用工具直到模型停止 --
 def agent_loop(messages: list):
     while True:
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "system", "content": SYSTEM}] + messages,
+            tools=tools,
+            max_tokens=8000,
         )
-        # Append assistant turn
-        messages.append({"role": "assistant", "content": response.content})
-        # If the model didn't call a tool, we're done
-        if response.stop_reason != "tool_use":
+        
+        # 获取助手的消息
+        assistant_message = response.choices[0].message
+        
+        # 添加助手回复到历史
+        messages.append({
+            "role": "assistant",
+            "content": assistant_message.content or "",
+            "tool_calls": [tc.model_dump() for tc in assistant_message.tool_calls] if assistant_message.tool_calls else None
+        })
+        
+        # 如果模型没有调用工具，则结束
+        if response.choices[0].finish_reason != "tool_calls":
             return
-        # Execute each tool call, collect results
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                print(f"\033[33m$ {block.input['command']}\033[0m")
-                output = run_bash(block.input["command"])
+        
+        # 执行每个工具调用，收集结果
+        tool_results = []
+        for tool_call in assistant_message.tool_calls:
+            if tool_call.function.name == "bash":
+                args = json.loads(tool_call.function.arguments)
+                print(f"\033[33m$ {args['command']}\033[0m")
+                output = run_bash(args["command"])
                 print(output[:200])
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": output})
-        messages.append({"role": "user", "content": results})
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": output
+                })
+        
+        messages.extend(tool_results)
 
 
 if __name__ == "__main__":
@@ -98,9 +115,9 @@ if __name__ == "__main__":
             break
         history.append({"role": "user", "content": query})
         agent_loop(history)
-        response_content = history[-1]["content"]
-        if isinstance(response_content, list):
-            for block in response_content:
-                if hasattr(block, "text"):
-                    print(block.text)
+        # 打印最后的回复
+        if history[-1]["role"] == "assistant":
+            content = history[-1].get("content", "")
+            if content:
+                print(content)
         print()
