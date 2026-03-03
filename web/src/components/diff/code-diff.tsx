@@ -13,7 +13,7 @@ interface CodeDiffProps {
 
 export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffProps) {
   const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
-  const [showInlineDiff, setShowInlineDiff] = useState(true);
+  const [showInlineDiff, setShowInlineDiff] = useState(false);
 
   const changes = useMemo(() => diffLines(oldSource, newSource), [oldSource, newSource]);
 
@@ -55,16 +55,18 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
         </div>
         
         <div className="flex items-center gap-2">
-          {/* 内联差异开关 */}
-          <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showInlineDiff}
-              onChange={(e) => setShowInlineDiff(e.target.checked)}
-              className="rounded border-zinc-300"
-            />
-            Inline diff
-          </label>
+          {/* 内联差异开关 - 改为按钮风格 */}
+          <button
+            onClick={() => setShowInlineDiff(!showInlineDiff)}
+            className={cn(
+              "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border",
+              showInlineDiff
+                ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
+                : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+            )}
+          >
+            {showInlineDiff ? "Inline: On" : "Inline: Off"}
+          </button>
           
           {/* 视图模式切换 */}
           <div className="flex shrink-0 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
@@ -96,7 +98,12 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
 
       {/* Diff Content */}
       {viewMode === "unified" ? (
-        <UnifiedView changes={changes} showInlineDiff={showInlineDiff} />
+        <UnifiedView 
+          changes={changes} 
+          oldSource={oldSource}
+          newSource={newSource}
+          showInlineDiff={showInlineDiff} 
+        />
       ) : (
         <SplitView changes={changes} />
       )}
@@ -104,26 +111,81 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
   );
 }
 
-function UnifiedView({ changes, showInlineDiff }: { changes: Change[]; showInlineDiff: boolean }) {
+function UnifiedView({ 
+  changes, 
+  oldSource,
+  newSource,
+  showInlineDiff 
+}: { 
+  changes: Change[]; 
+  oldSource: string;
+  newSource: string;
+  showInlineDiff: boolean;
+}) {
   let oldLine = 1;
   let newLine = 1;
 
+  // 收集所有行
   const rows: { 
     oldNum: number | null; 
     newNum: number | null; 
     type: "add" | "remove" | "context"; 
     text: string;
-    change?: Change;
+    oldText?: string;
+    newText?: string;
   }[] = [];
 
+  // 先收集所有变更块
+  const changeBlocks: { type: "add" | "remove" | "context"; lines: string[] }[] = [];
+  
   for (const change of changes) {
     const lines = change.value.replace(/\n$/, "").split("\n");
-    for (const line of lines) {
-      if (change.added) {
-        rows.push({ oldNum: null, newNum: newLine++, type: "add", text: line, change });
-      } else if (change.removed) {
-        rows.push({ oldNum: oldLine++, newNum: null, type: "remove", text: line, change });
+    if (change.added) {
+      changeBlocks.push({ type: "add", lines });
+    } else if (change.removed) {
+      changeBlocks.push({ type: "remove", lines });
+    } else {
+      changeBlocks.push({ type: "context", lines });
+    }
+  }
+
+  // 处理行，配对删除和添加
+  for (let i = 0; i < changeBlocks.length; i++) {
+    const block = changeBlocks[i];
+    
+    if (block.type === "remove") {
+      // 检查下一个块是否是添加（配对修改）
+      const nextBlock = changeBlocks[i + 1];
+      if (nextBlock?.type === "add") {
+        // 这是修改：删除 + 添加
+        const maxLines = Math.max(block.lines.length, nextBlock.lines.length);
+        for (let j = 0; j < maxLines; j++) {
+          const oldText = block.lines[j] ?? "";
+          const newText = nextBlock.lines[j] ?? "";
+          rows.push({
+            oldNum: j < block.lines.length ? oldLine++ : null,
+            newNum: j < nextBlock.lines.length ? newLine++ : null,
+            type: j < block.lines.length ? "remove" : "add",
+            text: j < block.lines.length ? oldText : newText,
+            oldText,
+            newText,
+          });
+        }
+        i++; // 跳过下一个块（已处理）
       } else {
+        // 纯删除
+        for (const line of block.lines) {
+          rows.push({ oldNum: oldLine++, newNum: null, type: "remove", text: line, oldText: line, newText: "" });
+        }
+      }
+    } else if (block.type === "add") {
+      // 纯添加（未配对的）
+      for (const line of block.lines) {
+        rows.push({ oldNum: null, newNum: newLine++, type: "add", text: line, oldText: "", newText: line });
+      }
+    } else {
+      // 上下文
+      for (const line of block.lines) {
         rows.push({ oldNum: oldLine++, newNum: newLine++, type: "context", text: line });
       }
     }
@@ -138,7 +200,6 @@ function UnifiedView({ changes, showInlineDiff }: { changes: Change[]; showInlin
               key={i} 
               row={row} 
               showInlineDiff={showInlineDiff}
-              isUnified
             />
           ))}
         </tbody>
@@ -272,19 +333,19 @@ function InlineDiff({ oldText, newText }: { oldText: string; newText: string }) 
       {parts.map((part, i) => {
         if (part.added) {
           return (
-            <mark 
+            <ins 
               key={i} 
-              className="bg-green-300/50 dark:bg-green-500/40 text-green-900 dark:text-green-100 rounded px-0.5"
+              className="bg-green-400/40 dark:bg-green-500/50 text-green-900 dark:text-green-100 rounded px-0.5 no-underline font-semibold"
             >
               {part.value}
-            </mark>
+            </ins>
           );
         }
         if (part.removed) {
           return (
             <del 
               key={i} 
-              className="bg-red-300/50 dark:bg-red-500/40 text-red-900 dark:text-red-100 rounded px-0.5 line-through"
+              className="bg-red-400/40 dark:bg-red-500/50 text-red-900 dark:text-red-100 rounded px-0.5 line-through"
             >
               {part.value}
             </del>
@@ -300,22 +361,26 @@ function InlineDiff({ oldText, newText }: { oldText: string; newText: string }) 
 function DiffRow({ 
   row, 
   showInlineDiff,
-  isUnified 
 }: { 
   row: { 
     oldNum: number | null; 
     newNum: number | null; 
     type: "add" | "remove" | "context"; 
     text: string;
-    change?: Change;
+    oldText?: string;
+    newText?: string;
   };
   showInlineDiff: boolean;
-  isUnified: boolean;
 }) {
-  // 尝试找配对行进行内联对比
+  // 渲染内容，支持内联差异
   const renderContent = () => {
-    if (!showInlineDiff || row.type === "context") {
-      return <span>{row.text}</span>;
+    // 只有修改的行才显示内联差异
+    if (showInlineDiff && row.type !== "context" && row.oldText !== undefined && row.newText !== undefined) {
+      if (row.type === "remove") {
+        return <InlineDiff oldText={row.oldText} newText={row.newText} />;
+      } else {
+        return <InlineDiff oldText={row.oldText} newText={row.newText} />;
+      }
     }
     return <span>{row.text}</span>;
   };
