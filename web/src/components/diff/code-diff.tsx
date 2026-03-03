@@ -32,15 +32,16 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between bg-zinc-50 dark:bg-zinc-900 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 truncate text-sm">
+      <div className="flex flex-col gap-3 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
+        {/* 第一行：文件名和统计 */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="min-w-0 flex-1 truncate text-sm">
             <span className="font-medium text-zinc-700 dark:text-zinc-300">{oldLabel}</span>
             <span className="mx-2 text-zinc-400">→</span>
             <span className="font-medium text-zinc-700 dark:text-zinc-300">{newLabel}</span>
           </div>
           {/* 统计 */}
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs shrink-0">
             {stats.removed > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400 font-medium">
                 -{stats.removed}
@@ -54,7 +55,8 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
           </div>
         </div>
         
-        <div className="flex items-center gap-2">
+        {/* 第二行：控制按钮 */}
+        <div className="flex items-center gap-2 flex-wrap">
           {/* 内联差异开关 - 改为按钮风格 */}
           <button
             onClick={() => setShowInlineDiff(!showInlineDiff)}
