@@ -71,13 +71,13 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
           </button>
           
           {/* 视图模式切换 */}
-          <div className="flex shrink-0">
+          <div className="flex shrink-0 gap-2">
             <button
               onClick={() => setViewMode("unified")}
               className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-l-md border",
+                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border",
                 viewMode === "unified"
-                  ? "bg-zinc-100 text-zinc-900 border-zinc-300 dark:bg-zinc-700 dark:text-white dark:border-zinc-600"
+                  ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
                   : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
               )}
             >
@@ -86,9 +86,9 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
             <button
               onClick={() => setViewMode("split")}
               className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-r-md border border-l-0 sm:inline-flex hidden",
+                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border sm:inline-flex hidden",
                 viewMode === "split"
-                  ? "bg-zinc-100 text-zinc-900 border-zinc-300 dark:bg-zinc-700 dark:text-white dark:border-zinc-600"
+                  ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
                   : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
               )}
             >
