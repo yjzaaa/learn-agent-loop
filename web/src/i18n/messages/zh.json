@@ -36,7 +36,11 @@
     "new_classes": "新增类",
     "new_tools": "新增工具",
     "new_functions": "新增函数",
-    "loc_delta": "代码量差异"
+    "loc_delta": "代码量差异",
+    "inline_on": "内联: 开",
+    "inline_off": "内联: 关",
+    "unified": "统一",
+    "split": "分栏"
   },
   "sessions": {
     "s01": "Agent 循环",

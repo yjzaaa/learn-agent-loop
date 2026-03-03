@@ -36,7 +36,11 @@
     "new_classes": "新規クラス",
     "new_tools": "新規ツール",
     "new_functions": "新規関数",
-    "loc_delta": "コード量の差分"
+    "loc_delta": "コード量の差分",
+    "inline_on": "インライン: オン",
+    "inline_off": "インライン: オフ",
+    "unified": "統合",
+    "split": "分割"
   },
   "sessions": {
     "s01": "エージェントループ",

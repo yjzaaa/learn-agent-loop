@@ -36,7 +36,11 @@
     "new_classes": "New Classes",
     "new_tools": "New Tools",
     "new_functions": "New Functions",
-    "loc_delta": "LOC Delta"
+    "loc_delta": "LOC Delta",
+    "inline_on": "Inline: On",
+    "inline_off": "Inline: Off",
+    "unified": "Unified",
+    "split": "Split"
   },
   "sessions": {
     "s01": "The Agent Loop",

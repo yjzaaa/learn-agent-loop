@@ -109,9 +109,29 @@ python agents/s_full.py               # Capstone: all mechanisms combined
 
 Interactive visualizations, step-through diagrams, source viewer, and documentation.
 
+**快速启动（仅前端）：**
 ```sh
 cd web && npm install && npm run dev   # http://localhost:3000
 ```
+
+**完整前后端联调：**
+```sh
+# 1. 启动后端 (终端 1)
+cd backend
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# 2. 启动前端 (终端 2)
+cd web
+cp .env.local.example .env.local
+npm install
+npm run dev   # http://localhost:3000
+```
+
+访问 http://localhost:8000/docs 查看后端 API 文档。
+
+详细联调说明见 [docs/INTEGRATION.md](./docs/INTEGRATION.md)。
 
 ## Learning Path
 
@@ -153,10 +173,18 @@ s08  Background Tasks        [6]     s10  Team Protocols          [12]
 learn-claude-code/
 |
 |-- agents/                        # Python reference implementations (s01-s12 + s_full capstone)
+|-- backend/                       # FastAPI backend service
+|   |-- app/                       # Main application
+|   |   |-- api/v1/                # API routes
+|   |   |-- core/                  # Config & logging
+|   |   |-- models/                # Pydantic schemas
+|   |   |-- services/              # Data service
+|   |   +-- main.py                # FastAPI entry
+|   +-- requirements.txt
 |-- docs/{en,zh,ja}/               # Mental-model-first documentation (3 languages)
 |-- web/                           # Interactive learning platform (Next.js)
 |-- skills/                        # Skill files for s05
-+-- .github/workflows/ci.yml      # CI: typecheck + build
++-- .github/workflows/ci.yml       # CI: typecheck + build
 ```
 
 ## Documentation

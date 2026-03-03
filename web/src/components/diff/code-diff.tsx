@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { diffLines, diffWords, Change } from "diff";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "@/lib/i18n";
 
 interface CodeDiffProps {
   oldSource: string;
@@ -12,6 +13,7 @@ interface CodeDiffProps {
 }
 
 export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffProps) {
+  const t = useTranslations("diff");
   const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
   const [showInlineDiff, setShowInlineDiff] = useState(false);
 
@@ -32,10 +34,10 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col gap-3 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
-        {/* 第一行：文件名和统计 */}
+      <div className="flex items-center justify-between gap-4 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
+        {/* 左侧：文件名和统计 */}
         <div className="flex items-center gap-3 min-w-0">
-          <div className="min-w-0 flex-1 truncate text-sm">
+          <div className="min-w-0 truncate text-sm">
             <span className="font-medium text-zinc-700 dark:text-zinc-300">{oldLabel}</span>
             <span className="mx-2 text-zinc-400">→</span>
             <span className="font-medium text-zinc-700 dark:text-zinc-300">{newLabel}</span>
@@ -55,46 +57,41 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
           </div>
         </div>
         
-        {/* 第二行：控制按钮 */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* 内联差异开关 - 改为按钮风格 */}
+        {/* 右侧：控制按钮 - 三个按钮放在同一个 flex 容器中 */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setShowInlineDiff(!showInlineDiff)}
             className={cn(
-              "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border",
+              "h-8 px-3 text-xs font-medium transition-colors rounded-md border inline-flex items-center justify-center",
               showInlineDiff
                 ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
                 : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
             )}
           >
-            {showInlineDiff ? "Inline: On" : "Inline: Off"}
+            {showInlineDiff ? t("inline_on") : t("inline_off")}
           </button>
-          
-          {/* 视图模式切换 */}
-          <div className="flex shrink-0 gap-2">
-            <button
-              onClick={() => setViewMode("unified")}
-              className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border",
-                viewMode === "unified"
-                  ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
-                  : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
-              )}
-            >
-              Unified
-            </button>
-            <button
-              onClick={() => setViewMode("split")}
-              className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-md border sm:inline-flex hidden",
-                viewMode === "split"
-                  ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
-                  : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
-              )}
-            >
-              Split
-            </button>
-          </div>
+          <button
+            onClick={() => setViewMode("unified")}
+            className={cn(
+              "h-8 px-3 text-xs font-medium transition-colors rounded-md border inline-flex items-center justify-center",
+              viewMode === "unified"
+                ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
+                : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+            )}
+          >
+            {t("unified")}
+          </button>
+          <button
+            onClick={() => setViewMode("split")}
+            className={cn(
+              "h-8 px-3 text-xs font-medium transition-colors rounded-md border sm:inline-flex hidden items-center justify-center",
+              viewMode === "split"
+                ? "bg-green-600 text-white border-green-600 dark:bg-green-600 dark:border-green-600"
+                : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
+            )}
+          >
+            {t("split")}
+          </button>
         </div>
       </div>
 
@@ -194,8 +191,8 @@ function UnifiedView({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse font-mono text-sm">
+    <div className="overflow-auto scrollbar-thin scrollbar-thumb-zinc-300 dark:scrollbar-thumb-zinc-600" style={{ maxHeight: "70vh" }}>
+      <table className="w-full border-collapse font-mono text-sm min-w-[600px]">
         <tbody>
           {rows.map((row, i) => (
             <DiffRow 
@@ -211,6 +208,89 @@ function UnifiedView({
 }
 
 function SplitView({ changes }: { changes: Change[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const leftPaneRef = useRef<HTMLDivElement>(null);
+  const rightPaneRef = useRef<HTMLDivElement>(null);
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
+
+  // Handle drag start
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    setIsDragging(true);
+  }, []);
+
+  // Handle drag movement - using refs to avoid re-renders during drag
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !containerRef.current || !leftPaneRef.current || !rightPaneRef.current) return;
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = Math.max(20, Math.min(80, (x / rect.width) * 100));
+      
+      // Direct DOM manipulation for smooth dragging (no React re-render)
+      leftPaneRef.current.style.width = `${ratio}%`;
+      rightPaneRef.current.style.width = `calc(${100 - ratio}% - 1rem)`;
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        
+        // Sync React state with final DOM value
+        if (containerRef.current && leftPaneRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const leftWidth = leftPaneRef.current.getBoundingClientRect().width;
+          const ratio = Math.max(20, Math.min(80, (leftWidth / rect.width) * 100));
+          setSplitRatio(ratio);
+        }
+      }
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  // Apply body styles when dragging starts
+  useEffect(() => {
+    if (isDragging) {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+  }, [isDragging]);
+
+  // Apply split ratio when it changes (and not dragging)
+  useEffect(() => {
+    if (!isDraggingRef.current && leftPaneRef.current && rightPaneRef.current) {
+      leftPaneRef.current.style.width = `${splitRatio}%`;
+      rightPaneRef.current.style.width = `calc(${100 - splitRatio}% - 1rem)`;
+    }
+  }, [splitRatio]);
+
+  // Sync scroll between left and right panes
+  const handleLeftScroll = useCallback(() => {
+    if (rightPaneRef.current && leftPaneRef.current) {
+      rightPaneRef.current.scrollTop = leftPaneRef.current.scrollTop;
+    }
+  }, []);
+
+  const handleRightScroll = useCallback(() => {
+    if (leftPaneRef.current && rightPaneRef.current) {
+      leftPaneRef.current.scrollTop = rightPaneRef.current.scrollTop;
+    }
+  }, []);
+
   let oldLine = 1;
   let newLine = 1;
 
@@ -260,66 +340,129 @@ function SplitView({ changes }: { changes: Change[] }) {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse font-mono text-sm">
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              {/* Left side */}
-              <td className={cn(
-                "w-12 select-none px-2 text-right text-zinc-500 dark:text-zinc-600",
-                row.left.type === "remove" && "bg-red-50 dark:bg-red-950/20",
-                row.left.type === "context" && "bg-zinc-50 dark:bg-zinc-900",
-                row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.left.num ?? ""}
-              </td>
-              <td className={cn(
-                "w-6 select-none text-center text-xs font-medium",
-                row.left.type === "remove" && "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-400",
-                row.left.type === "context" && "bg-zinc-50 text-zinc-400 dark:bg-zinc-900",
-                row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.left.type === "remove" ? "-" : row.left.type === "context" ? " " : ""}
-              </td>
-              <td className={cn(
-                "w-1/2 border-r border-zinc-200 dark:border-zinc-700 whitespace-pre px-3 py-0.5",
-                row.left.type === "remove" && "bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200",
-                row.left.type === "context" && "text-zinc-800 dark:text-zinc-300",
-                row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.left.text}
-              </td>
+    <div 
+      ref={containerRef}
+      className="flex"
+      style={{ height: "70vh" }}
+    >
+      {/* Left side with its own scrollbar */}
+      <div 
+        ref={leftPaneRef}
+        style={{ width: `${splitRatio}%` }} 
+        className="flex-shrink-0 overflow-auto scrollbar-thin scrollbar-thumb-zinc-300 dark:scrollbar-thumb-zinc-600"
+        onScroll={handleLeftScroll}
+      >
+        <table className="w-full border-collapse font-mono text-sm min-w-[300px]">
+          <colgroup>
+            <col className="w-12" />
+            <col className="w-6" />
+            <col className="w-full" />
+          </colgroup>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={`left-${i}`}>
+                <td className={cn(
+                  "select-none px-2 text-right text-zinc-500 dark:text-zinc-600",
+                  row.left.type === "remove" && "bg-red-50 dark:bg-red-950/20",
+                  row.left.type === "context" && "bg-zinc-50 dark:bg-zinc-900",
+                  row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.left.num ?? ""}
+                </td>
+                <td className={cn(
+                  "select-none text-center text-xs font-medium",
+                  row.left.type === "remove" && "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-400",
+                  row.left.type === "context" && "bg-zinc-50 text-zinc-400 dark:bg-zinc-900",
+                  row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.left.type === "remove" ? "-" : row.left.type === "context" ? " " : ""}
+                </td>
+                <td className={cn(
+                  "whitespace-pre px-3 py-0.5",
+                  row.left.type === "remove" && "bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200",
+                  row.left.type === "context" && "text-zinc-800 dark:text-zinc-300",
+                  row.left.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.left.text}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-              {/* Right side */}
-              <td className={cn(
-                "w-12 select-none px-2 text-right text-zinc-500 dark:text-zinc-600",
-                row.right.type === "add" && "bg-green-50 dark:bg-green-950/20",
-                row.right.type === "context" && "bg-zinc-50 dark:bg-zinc-900",
-                row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.right.num ?? ""}
-              </td>
-              <td className={cn(
-                "w-6 select-none text-center text-xs font-medium",
-                row.right.type === "add" && "bg-green-50 text-green-600 dark:bg-green-950/20 dark:text-green-400",
-                row.right.type === "context" && "bg-zinc-50 text-zinc-400 dark:bg-zinc-900",
-                row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.right.type === "add" ? "+" : row.right.type === "context" ? " " : ""}
-              </td>
-              <td className={cn(
-                "w-1/2 whitespace-pre px-3 py-0.5",
-                row.right.type === "add" && "bg-green-50 text-green-900 dark:bg-green-950/20 dark:text-green-200",
-                row.right.type === "context" && "text-zinc-800 dark:text-zinc-300",
-                row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
-              )}>
-                {row.right.text}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Draggable divider */}
+      <div
+        className={cn(
+          "w-4 flex-shrink-0 cursor-col-resize flex items-center justify-center relative group bg-transparent",
+          isDragging && "cursor-col-resize"
+        )}
+        onMouseDown={handleMouseDown}
+        style={{ zIndex: 10 }}
+      >
+        {/* Visible divider line */}
+        <div className={cn(
+          "w-px h-full bg-zinc-300 dark:bg-zinc-600 transition-all",
+          "group-hover:w-1 group-hover:bg-blue-400 dark:group-hover:bg-blue-500",
+          isDragging && "w-1 bg-blue-500 dark:bg-blue-400"
+        )} />
+        {/* Drag handle indicator */}
+        <div className={cn(
+          "absolute w-4 h-8 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center opacity-0 transition-opacity shadow-sm",
+          "group-hover:opacity-100",
+          isDragging && "opacity-100 bg-blue-100 dark:bg-blue-900"
+        )}>
+          <svg width="10" height="10" viewBox="0 0 10 10" className="text-zinc-500 dark:text-zinc-400">
+            <path d="M3 2v6M7 2v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </div>
+      </div>
+
+      {/* Right side with its own scrollbar */}
+      <div 
+        ref={rightPaneRef}
+        style={{ width: `calc(${100 - splitRatio}% - 1rem)` }} 
+        className="flex-shrink-0 flex-grow overflow-auto scrollbar-thin scrollbar-thumb-zinc-300 dark:scrollbar-thumb-zinc-600"
+        onScroll={handleRightScroll}
+      >
+        <table className="w-full border-collapse font-mono text-sm min-w-[300px]">
+          <colgroup>
+            <col className="w-12" />
+            <col className="w-6" />
+            <col className="w-full" />
+          </colgroup>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={`right-${i}`}>
+                <td className={cn(
+                  "select-none px-2 text-right text-zinc-500 dark:text-zinc-600",
+                  row.right.type === "add" && "bg-green-50 dark:bg-green-950/20",
+                  row.right.type === "context" && "bg-zinc-50 dark:bg-zinc-900",
+                  row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.right.num ?? ""}
+                </td>
+                <td className={cn(
+                  "select-none text-center text-xs font-medium",
+                  row.right.type === "add" && "bg-green-50 text-green-600 dark:bg-green-950/20 dark:text-green-400",
+                  row.right.type === "context" && "bg-zinc-50 text-zinc-400 dark:bg-zinc-900",
+                  row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.right.type === "add" ? "+" : row.right.type === "context" ? " " : ""}
+                </td>
+                <td className={cn(
+                  "whitespace-pre px-3 py-0.5",
+                  row.right.type === "add" && "bg-green-50 text-green-900 dark:bg-green-950/20 dark:text-green-200",
+                  row.right.type === "context" && "text-zinc-800 dark:text-zinc-300",
+                  row.right.type === "empty" && "bg-zinc-50 dark:bg-zinc-900"
+                )}>
+                  {row.right.text}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

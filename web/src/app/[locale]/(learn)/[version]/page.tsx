@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { LEARNING_PATH, VERSION_META, LAYERS } from "@/lib/constants";
 import { LayerBadge } from "@/components/ui/badge";
-import versionsData from "@/data/generated/versions.json";
 import { VersionDetailClient } from "./client";
 import { getTranslations } from "@/lib/i18n-server";
+import { getVersionServer, getVersionDiffServer, getVersionSourceServer } from "@/lib/server-api";
 
 export function generateStaticParams() {
   return LEARNING_PATH.map((version) => ({ version }));
@@ -16,9 +16,14 @@ export default async function VersionPage({
 }) {
   const { locale, version } = await params;
 
-  const versionData = versionsData.versions.find((v) => v.id === version);
+  // 从 API 获取数据
+  const [versionData, diffData, sourceData] = await Promise.all([
+    getVersionServer(version),
+    getVersionDiffServer(version),
+    getVersionSourceServer(version),
+  ]);
+
   const meta = VERSION_META[version];
-  const diff = versionsData.diffs.find((d) => d.to === version) ?? null;
 
   if (!versionData || !meta) {
     return (
@@ -40,6 +45,16 @@ export default async function VersionPage({
     pathIndex < LEARNING_PATH.length - 1
       ? LEARNING_PATH[pathIndex + 1]
       : null;
+
+  // 构造 diff 对象给客户端组件
+  const diff = diffData ? {
+    from: diffData.from_version,
+    to: diffData.to_version,
+    newClasses: diffData.new_classes,
+    newFunctions: diffData.new_functions,
+    newTools: diffData.new_tools,
+    locDelta: diffData.loc_delta,
+  } : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-10 py-4">
@@ -77,8 +92,8 @@ export default async function VersionPage({
       <VersionDetailClient
         version={version}
         diff={diff}
-        source={versionData.source}
-        filename={versionData.filename}
+        source={sourceData?.source || "// Source not available"}
+        filename={sourceData?.filename || "unknown.ts"}
       />
 
       {/* Prev / Next navigation */}

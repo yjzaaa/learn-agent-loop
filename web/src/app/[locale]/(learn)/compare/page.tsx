@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n";
 import { LEARNING_PATH, VERSION_META } from "@/lib/constants";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,19 +8,43 @@ import { LayerBadge } from "@/components/ui/badge";
 import { CodeDiff } from "@/components/diff/code-diff";
 import { ArchDiagram } from "@/components/architecture/arch-diagram";
 import { ArrowRight, FileCode, Wrench, Box, FunctionSquare } from "lucide-react";
-import type { VersionIndex } from "@/types/agent-data";
-import versionData from "@/data/generated/versions.json";
-
-const data = versionData as VersionIndex;
+import type { AgentVersion } from "@/lib/api-service";
+import { getVersion } from "@/lib/api-service";
 
 export default function ComparePage() {
   const t = useTranslations("compare");
   const locale = useLocale();
   const [versionA, setVersionA] = useState<string>("");
   const [versionB, setVersionB] = useState<string>("");
+  const [infoA, setInfoA] = useState<AgentVersion | null>(null);
+  const [infoB, setInfoB] = useState<AgentVersion | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const infoA = useMemo(() => data.versions.find((v) => v.id === versionA), [versionA]);
-  const infoB = useMemo(() => data.versions.find((v) => v.id === versionB), [versionB]);
+  // 当选择的版本变化时，从 API 获取数据
+  useEffect(() => {
+    async function fetchVersionA() {
+      if (!versionA) {
+        setInfoA(null);
+        return;
+      }
+      const data = await getVersion(versionA);
+      setInfoA(data);
+    }
+    fetchVersionA();
+  }, [versionA]);
+
+  useEffect(() => {
+    async function fetchVersionB() {
+      if (!versionB) {
+        setInfoB(null);
+        return;
+      }
+      const data = await getVersion(versionB);
+      setInfoB(data);
+    }
+    fetchVersionB();
+  }, [versionB]);
+
   const metaA = versionA ? VERSION_META[versionA] : null;
   const metaB = versionB ? VERSION_META[versionB] : null;
 
@@ -32,13 +56,13 @@ export default function ComparePage() {
     const onlyB = infoB.tools.filter((t) => !toolsA.has(t));
     const shared = infoA.tools.filter((t) => toolsB.has(t));
 
-    const classesA = new Set(infoA.classes.map((c) => c.name));
-    const classesB = new Set(infoB.classes.map((c) => c.name));
-    const newClasses = infoB.classes.map((c) => c.name).filter((c) => !classesA.has(c));
+    const classesA = new Set(infoA.classes);
+    const classesB = new Set(infoB.classes);
+    const newClasses = infoB.classes.filter((c) => !classesA.has(c));
 
-    const funcsA = new Set(infoA.functions.map((f) => f.name));
-    const funcsB = new Set(infoB.functions.map((f) => f.name));
-    const newFunctions = infoB.functions.map((f) => f.name).filter((f) => !funcsA.has(f));
+    const funcsA = new Set(infoA.functions);
+    const funcsB = new Set(infoB.functions);
+    const newFunctions = infoB.functions.filter((f) => !funcsA.has(f));
 
     return {
       locDelta: infoB.loc - infoA.loc,
