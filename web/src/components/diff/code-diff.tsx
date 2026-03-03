@@ -71,14 +71,14 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
           </button>
           
           {/* 视图模式切换 */}
-          <div className="flex shrink-0 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+          <div className="flex shrink-0">
             <button
               onClick={() => setViewMode("unified")}
               className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-l-md",
+                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-l-md border",
                 viewMode === "unified"
-                  ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                  ? "bg-zinc-100 text-zinc-900 border-zinc-300 dark:bg-zinc-700 dark:text-white dark:border-zinc-600"
+                  : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
               )}
             >
               Unified
@@ -86,10 +86,10 @@ export function CodeDiff({ oldSource, newSource, oldLabel, newLabel }: CodeDiffP
             <button
               onClick={() => setViewMode("split")}
               className={cn(
-                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-r-md sm:inline-flex hidden",
+                "min-h-[32px] px-3 text-xs font-medium transition-colors rounded-r-md border border-l-0 sm:inline-flex hidden",
                 viewMode === "split"
-                  ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                  ? "bg-zinc-100 text-zinc-900 border-zinc-300 dark:bg-zinc-700 dark:text-white dark:border-zinc-600"
+                  : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
               )}
             >
               Split
