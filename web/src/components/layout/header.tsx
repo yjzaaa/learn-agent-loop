@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations, useLocale } from "@/lib/i18n";
 import { Github, Menu, X, Sun, Moon } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -24,14 +24,18 @@ export function Header() {
   const pathname = usePathname();
   const locale = useLocale();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [dark, setDark] = useState(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("theme");
-      if (stored) return stored === "dark";
-      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  // 使用 null 作为初始值，表示尚未确定主题
+  const [dark, setDark] = useState<boolean | null>(null);
+
+  // 在客户端挂载后才读取主题设置
+  useEffect(() => {
+    const stored = localStorage.getItem("theme");
+    if (stored) {
+      setDark(stored === "dark");
+    } else {
+      setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
     }
-    return false;
-  });
+  }, []);
 
   function toggleDark() {
     const next = !dark;
@@ -39,6 +43,15 @@ export function Header() {
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("theme", next ? "dark" : "light");
   }
+
+  // 主题确定前显示占位图标，避免 hydration 不匹配
+  const ThemeIcon = dark === null ? (
+    <span className="block h-4 w-4" /> // 占位符
+  ) : dark ? (
+    <Sun size={16} />
+  ) : (
+    <Moon size={16} />
+  );
 
   function switchLocale(newLocale: string) {
     const newPath = pathname.replace(`/${locale}`, `/${newLocale}`);
@@ -90,8 +103,9 @@ export function Header() {
           <button
             onClick={toggleDark}
             className="rounded-md p-1.5 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-white"
+            aria-label="Toggle dark mode"
           >
-            {dark ? <Sun size={16} /> : <Moon size={16} />}
+            {ThemeIcon}
           </button>
 
           <a
@@ -147,8 +161,9 @@ export function Header() {
               <button
                 onClick={toggleDark}
                 className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-white"
+                aria-label="Toggle dark mode"
               >
-                {dark ? <Sun size={18} /> : <Moon size={18} />}
+                {dark === null ? <span className="block h-4 w-4" /> : dark ? <Sun size={18} /> : <Moon size={18} />}
               </button>
               <a
                 href="https://github.com/shareAI-lab/learn-claude-code"
